@@ -1,0 +1,1557 @@
+--[[
+    GHOST HUB - AUTO FARM CHEST BETA  v11.2
+    UI do site (fantasma, neon ciano/lime, tabs laterais, bubble minimizado)
+    Movimento com a logica PartTele + TweenService (Tween / TP risco / Tween+TP)
+    v11.1: fonte Varela Round, tween fatiado anti-kick, portais com timeout/log,
+    baus simples neon, FPS 1/2/3 externos, Beli/s e Beli/min, bolinha com a logo.
+    v11: TP de bau usando PORTAIS (requestEntrance) antes do Tween, FPS Booster externo,
+    AntiTPBug / HoldPosition / AutoReturnDeath funcionando de verdade, Stop Legendary + Stop Strange.
+]]
+local Players           = game:GetService("Players")
+local UserInputService  = game:GetService("UserInputService")
+local TweenService      = game:GetService("TweenService")
+local RunService        = game:GetService("RunService")
+local HttpService       = game:GetService("HttpService")
+local TeleportService   = game:GetService("TeleportService")
+local Lighting          = game:GetService("Lighting")
+local LP                = Players.LocalPlayer
+----------------------------------------------------------------- CONFIG
+local FILE = "GhostHub_AutoChest_Config.json"
+local LANG_FILE = "GhostHub_Lang.json"
+local SCRIPT_URL = "https://raw.githubusercontent.com/GhostHub/AutoChest/main/GhostHub_AutoChest.lua" -- troque pela sua URL
+local Default = {
+    TweenSpeed      = 300,
+    FarmMethod      = "TweenTP",   -- "Tween" | "TP" (risco) | "TweenTP"
+    FarmChest       = true,
+    TPChestDelay    = 0.5,
+    TargetTP        = 100,
+    ReachDist       = 4,
+    MaxChestDist    = 25000,
+    HopStep         = 40,          -- studs maximos por 0.1s (anti-kick do tween/TP)
+    PortalTimeout   = 6,           -- s esperando o portal levar o char
+    SimpleChests    = false,       -- baus simples (bloco neon, sem textura/animacao)
+    DisableSkins    = false,       -- some com skins/acessorios/efeitos dos players
+    LoadAllChests   = true,        -- forca carregar TODOS os baus do mapa (stream)
+    ChestLock       = true,        -- trava no bau ate terminar de pegar
+    ReturnHome      = false,       -- volta pro ponto inicial quando o farm para
+    FPS1            = false,       -- scripts externos de FPS (1 vez por sessao)
+    FPS2            = false,
+    FPS3            = false,
+    GrabSteps       = 2,
+    GrabChest       = true,        -- mexidas no bau ativar/desativar
+    FarmSilver      = true,
+    FarmGold        = true,
+    FarmDiamond     = true,
+    ESPSilver       = true,
+    ESPGold         = true,
+    ESPDiamond      = true,
+    StopLegendary   = true,
+    StopStrange     = true,        -- para o farm ao pegar item raro/estranho
+    PortalTP        = true,        -- usa portais (requestEntrance) antes do tween
+    PortalRadius    = 100,         -- % do raio da regiao usado pra decidir o portal
+    PortalCooldown  = 8,           -- s minimos entre tentativas de portal
+    HoldPosition    = true,
+    AntiTPBug       = true,
+    AutoReturnDeath = true,
+    -- limites -> server hop
+    LimitChestOn    = false,
+    LimitChest      = 100,
+    LimitMoneyOn    = false,
+    LimitMoney      = 50000,
+    LimitTimeOn     = false,
+    LimitTime       = 30,          -- minutos
+    -- performance / server
+    FPSBoost        = false,
+    FPSExternal     = false,       -- executa os scripts externos de FPS (uma vez por sessao)
+    DeleteMap       = false,
+    WhiteScreen     = false,
+    ServerHop       = false,
+    MinUptime       = 2,           -- 2 | 3 | 4 | 0 = infinito
+    HopMode         = "limit",     -- "limit" = hop quando bater limite | "loop" = hop sem parar
+    HopLoopDelay    = 5,           -- minutos entre hops no modo loop
+    HopSelect       = "latency",   -- "latency" | "players" | "random"
+    HopMaxPlayers   = 20,          -- so entra em server com no maximo X jogadores
+    HopMinPlayers   = 0,           -- so entra em server com no minimo X jogadores
+    AvoidPrivate    = true,        -- nunca entrar em server privado/VIP
+    ESPAutoClear    = true,        -- apaga o ESP assim que o bau some/e pego
+    HopOverlay      = true,
+    HopDelay        = 3,           -- segundos do aviso na tela
+    AutoExecute     = false,
+    -- selecao de baus
+    ChestFilter     = "all",       -- "all" | "silver" | "gold" | "diamond"
+    NeighborDist    = 400,         -- raio de "baus vizinhos" (prioridade)
+    RetargetRate    = 0.05,        -- s entre re-avaliacoes de alvo
+    Hysteresis      = 25,          -- % que o novo bau precisa ser melhor p/ trocar
+    StuckTime       = 6,           -- s sem progresso -> troca de alvo
+    -- interface
+    UIMode          = "TargetBox", -- "TargetBox" | "BarBox" | "Box"
+    Language        = "pt",
+    -- perfis completos (Config 1-3)
+    Profile         = 1,           -- 1 | 2 | 3 (perfil ativo)
+    ProfileAutoLoad = true,        -- trocar de perfil carrega na hora
+}
+
+local Config = {}
+for k, v in pairs(Default) do Config[k] = v end
+local function loadConfig()
+    if isfile and isfile(FILE) then
+        local ok, data = pcall(function() return HttpService:JSONDecode(readfile(FILE)) end)
+        if ok and type(data) == "table" then
+            for k, v in pairs(data) do if Default[k] ~= nil then Config[k] = v end end
+        end
+    end
+end
+local function saveConfig()
+    if writefile then
+        pcall(function() writefile(FILE, HttpService:JSONEncode(Config)) end)
+    end
+end
+loadConfig()
+local function writeAutoExec()
+    if not (writefile and makefolder) then return false end
+    local folders = { "autoexec", "auto_execute", "autoexecute" }
+    local body = ([[
+-- GHOST HUB AUTO CHEST (auto execute)
+task.wait(6)
+local cfg = [==[%s]==]
+pcall(function() writefile("%s", cfg) end)
+local ok, src = pcall(function() return game:HttpGet("%s") end)
+if ok and src and #src > 200 then
+    pcall(function() loadstring(src)() end)
+end
+]]):format(HttpService:JSONEncode(Config), FILE, SCRIPT_URL)
+    local wrote = false
+    for _, f in ipairs(folders) do
+        pcall(function()
+            if not isfolder or not isfolder(f) then makefolder(f) end
+            writefile(f .. "/GhostHub_AutoChest.lua", body)
+            wrote = true
+        end)
+    end
+    return wrote
+end
+----------------------------------------------------------------- IDIOMAS
+local L = {
+    pt = {
+        ui="UI", uimode="Modo dos controles", uiTarget="Target + Caixa", uiBar="Barra dinâmica + Caixa", uiBox="Só caixa de texto",
+        title="GHOST HUB - AUTO FARM CHEST BETA", main="Main", config="Config", fruit="Frutas", stats="Stats", save="Save",
+        auto="AUTO CHEST", method="Método", spd="Velocidade do Tween", tpdelay="TP Delay (s)",
+        target="Target TP (metros)", reach="Chegada (metros)", grab="Mexidas no baú",
+        maxdist="Distância máx. do baú", silver="Baú Prata", gold="Baú de Ouro", diamond="Baú Diamante",
+        espsilver="ESP Prata", espgold="ESP Ouro", espdiamond="ESP Diamante", espfruit="ESP Frutas",
+        stopleg="Stop Legendary Item", antitp="Anti TP Bug", hold="Hold Position",
+        retdeath="Renascer na ilha", collect="Auto Coletar Fruta", store="Auto Guardar Fruta",
+        random="Random Fruit (girar)", islands="Ilhas (TP)", lang="Idioma", chests="Baús para farmar",
+        esp="ESP", safety="Segurança & Movimento", tuning="Ajuste fino", saveBtn="Salvar config",
+        reset="Restaurar padrão", saved="Config salva!", on="ON", off="OFF",
+        perf="Performance", fps="FPS Boost", delmap="Deletar mapa (só baús/frutas)",
+        white="White Screen", hop="Server Hop por uptime", uptime="Uptime mínimo do server",
+        hopnow="Trocar de server agora", autoexec="Auto Execute", autoexecOn="Salvar no autoexec",
+        autoexecOk="Autoexec salvo!", autoexecFail="Executor sem writefile/makefolder",
+        sReset="Zerar stats", inf="∞",
+        profiles="Perfis (setups completos)", profSlot="Perfil ativo", profSave="Salvar neste perfil",
+        profLoad="Carregar perfil", profDel="Apagar perfil", profAuto="Carregar ao trocar de perfil",
+        profSaved="Perfil salvo!", profLoaded="Perfil carregado!", profEmpty="Perfil vazio",
+        profDeleted="Perfil apagado", profNo="Executor sem writefile",
+        sRate="Ritmo (tempo real)", sChestsHr="Baús / hora", sMoneyHr="Beli / hora", sAvgChest="Beli por baú",
+        sFruits="Frutas pegas", sMoney="Beli ganho", sTimeServer="Tempo no server",
+        sUptime="Server ligado há", sList="Frutas coletadas", sNone="nenhuma ainda",
+        sReset="Zerar stats", inf="∞",
+        limits="Limites → Server Hop", limChest="Limite de baús", limChestN="Baús alvo",
+        limMoney="Limite de dinheiro (Beli)", limMoneyN="Beli alvo",
+        limTime="Limite de tempo", limTimeN="Minutos",
+        grabOn="Mexidas no baú (ativar)", hopOverlay="Mostrar aviso de hop na tela",
+        hopDelay="Segundos antes do hop", hopping="TROCANDO DE SERVER", hopIn="Dando hop em",
+        hopCancel="Clique em qualquer lugar da tela para cancelar",
+        hopCanceled="Hop cancelado", preset="toque no número para trocar o preset",
+        chestType="Tipo de baú (filtro)", ctAll="Todos", ctSilver="Só Prata", ctGold="Só Ouro", ctDiamond="Só Diamante",
+        neighbor="Raio de baús vizinhos", stuck="Trocar alvo se travar (s)",
+        nearby="Baús por perto", curTarget="Alvo atual",
+        hopMode="Modo do Server Hop", hopModeLimit="Ao bater o limite", hopModeLoop="Hop sem parar",
+        hopLoopDelay="Minutos entre hops (loop)", hopSelect="Escolher server por",
+        hopLat="Melhor latência", hopPlayers="Menos jogadores", hopRandom="Aleatório",
+        hopMaxP="Máx. de jogadores no server", hopMinP="Mín. de jogadores no server",
+        avoidPrivate="Não entrar em server privado", espClear="Apagar ESP ao pegar o baú",
+        autoTune="Auto Baús (ajuste fino)", retarget="Re-alvo (segundos)", hyst="Histerese (%)",
+        exportLang="Exportar idiomas (PT/EN/VI)", exportOk="Idiomas salvos em GhostHub_Lang.json",
+        exportFail="Executor sem writefile", langLoaded="Idiomas carregados do arquivo",
+        hopSearch="Procurando server...", hopNone="Nenhum server público compatível",
+
+    },
+    en = {
+        ui="UI", uimode="Controls mode", uiTarget="Target + Text box", uiBar="Dynamic bar + Text box", uiBox="Text box only",
+        title="GHOST HUB - AUTO FARM CHEST BETA", main="Main", config="Config", fruit="Fruit", stats="Stats", save="Save",
+        auto="AUTO CHEST", method="Method", spd="Tween speed", tpdelay="TP Delay (s)",
+        target="Target TP (studs)", reach="Reach (studs)", grab="Grab steps",
+        maxdist="Max chest distance", silver="Silver Chest", gold="Chest of Gold", diamond="Diamond Chest",
+        espsilver="ESP Silver", espgold="ESP Gold", espdiamond="ESP Diamond", espfruit="Fruit ESP",
+        stopleg="Stop Legendary Item", antitp="Anti TP Bug", hold="Hold Position",
+        retdeath="Respawn on island", collect="Auto Collect Fruit", store="Auto Store Fruit",
+        random="Random Fruit (spin)", islands="Islands (TP)", lang="Language", chests="Chests to farm",
+        esp="ESP", safety="Safety & Movement", tuning="Fine tuning", saveBtn="Save config",
+        reset="Reset default", saved="Config saved!", on="ON", off="OFF",
+        perf="Performance", fps="FPS Boost", delmap="Delete map (chests/fruits only)",
+        white="White Screen", hop="Server hop by uptime", uptime="Minimum server uptime",
+        hopnow="Hop server now", autoexec="Auto Execute", autoexecOn="Save to autoexec",
+        autoexecOk="Autoexec saved!", autoexecFail="Executor has no writefile/makefolder",
+        sReset="Reset stats", inf="∞",
+        profiles="Profiles (full setups)", profSlot="Active profile", profSave="Save to this profile",
+        profLoad="Load profile", profDel="Delete profile", profAuto="Load on profile switch",
+        profSaved="Profile saved!", profLoaded="Profile loaded!", profEmpty="Empty profile",
+        profDeleted="Profile deleted", profNo="Executor has no writefile",
+        sRate="Rate (live)", sChestsHr="Chests / hour", sMoneyHr="Beli / hour", sAvgChest="Beli per chest",
+        sFruits="Fruits taken", sMoney="Beli earned", sTimeServer="Time in server",
+        sUptime="Server up for", sList="Collected fruits", sNone="none yet",
+        sReset="Reset stats", inf="∞",
+        limits="Limits → Server Hop", limChest="Chest limit", limChestN="Chests target",
+        limMoney="Beli limit", limMoneyN="Beli target",
+        limTime="Time limit", limTimeN="Minutes",
+        grabOn="Grab moves on chest", hopOverlay="Show hop warning screen",
+        hopDelay="Seconds before hop", hopping="SERVER HOP", hopIn="Hopping in",
+        hopCancel="Click anywhere to cancel", hopCanceled="Hop canceled",
+        preset="tap the number to cycle presets",
+        chestType="Chest type (filter)", ctAll="All", ctSilver="Silver only", ctGold="Gold only", ctDiamond="Diamond only",
+        neighbor="Nearby chest radius", stuck="Switch target if stuck (s)",
+        nearby="Chests nearby", curTarget="Current target",
+        hopMode="Server hop mode", hopModeLimit="When limit is hit", hopModeLoop="Hop non-stop",
+        hopLoopDelay="Minutes between hops (loop)", hopSelect="Pick server by",
+        hopLat="Best latency", hopPlayers="Fewer players", hopRandom="Random",
+        hopMaxP="Max players in server", hopMinP="Min players in server",
+        avoidPrivate="Never join private server", espClear="Clear ESP when chest is taken",
+        autoTune="Auto Chest (fine tuning)", retarget="Retarget (seconds)", hyst="Hysteresis (%)",
+        exportLang="Export languages (PT/EN/VI)", exportOk="Languages saved to GhostHub_Lang.json",
+        exportFail="Executor has no writefile", langLoaded="Languages loaded from file",
+        hopSearch="Searching server...", hopNone="No matching public server",
+        stopstrange="Parar em item estranho/raro", portal="TP de bau por portais",
+        portalRadius="Raio da regiao do portal (%)", portalCd="Cooldown do portal (s)",
+        fpsext="FPS Boost externo (scripts)", fpsextOn="FPS externo carregado (sem desligar)",
+        fpsextOff="FPS externo continua ativo ate reentrar no server",
+        portalGo="Portal:", legStop="Parado: item lendario", strStop="Parado: item estranho",
+
+    },
+    vi = {
+        ui="UI", uimode="Kiểu điều khiển", uiTarget="Mốc + Ô nhập", uiBar="Thanh trượt + Ô nhập", uiBox="Chỉ ô nhập",
+        title="GHOST HUB - AUTO FARM CHEST BETA", main="Chính", config="Cài đặt", fruit="Trái ác quỷ", stats="Thống kê", save="Lưu",
+        auto="TỰ ĐỘNG RƯƠNG", method="Cách", spd="Tốc độ Tween", tpdelay="Chờ TP (giây)",
+        target="Mốc TP (mét)", reach="Tới nơi (mét)", grab="Số lần nhặt",
+        maxdist="Khoảng cách tối đa", silver="Rương Bạc", gold="Rương Vàng", diamond="Rương Kim Cương",
+        espsilver="ESP Bạc", espgold="ESP Vàng", espdiamond="ESP Kim Cương", espfruit="ESP Trái",
+        stopleg="Dừng khi có Legendary", antitp="Chống lỗi TP", hold="Giữ vị trí",
+        retdeath="Hồi sinh tại đảo", collect="Tự nhặt trái", store="Tự cất trái",
+        random="Trái ngẫu nhiên (quay)", islands="Đảo (TP)", lang="Ngôn ngữ", chests="Rương cần farm",
+        esp="ESP", safety="An toàn & Di chuyển", tuning="Tinh chỉnh", saveBtn="Lưu cài đặt",
+        reset="Đặt lại mặc định", saved="Đã lưu!", on="BẬT", off="TẮT",
+        perf="Hiệu năng", fps="Tăng FPS", delmap="Xoá bản đồ (chỉ rương/trái)",
+        white="Màn hình trắng", hop="Đổi server theo uptime", uptime="Uptime tối thiểu",
+        hopnow="Đổi server ngay", autoexec="Tự chạy", autoexecOn="Lưu vào autoexec",
+        autoexecOk="Đã lưu autoexec!", autoexecFail="Executor không hỗ trợ writefile",
+        sReset="Xoá thống kê", inf="∞",
+        profiles="Hồ sơ (thiết lập đầy đủ)", profSlot="Hồ sơ đang dùng", profSave="Lưu vào hồ sơ này",
+        profLoad="Tải hồ sơ", profDel="Xoá hồ sơ", profAuto="Tải khi đổi hồ sơ",
+        profSaved="Đã lưu hồ sơ!", profLoaded="Đã tải hồ sơ!", profEmpty="Hồ sơ trống",
+        profDeleted="Đã xoá hồ sơ", profNo="Executor không hỗ trợ writefile",
+        sRate="Tốc độ (trực tiếp)", sChestsHr="Rương / giờ", sMoneyHr="Beli / giờ", sAvgChest="Beli mỗi rương",
+        sFruits="Trái đã nhặt", sMoney="Beli kiếm được", sTimeServer="Thời gian trong server",
+        sUptime="Server bật được", sList="Danh sách trái", sNone="chưa có",
+        sReset="Xoá thống kê", inf="∞",
+        limits="Giới hạn → Đổi server", limChest="Giới hạn rương", limChestN="Số rương",
+        limMoney="Giới hạn Beli", limMoneyN="Beli mục tiêu",
+        limTime="Giới hạn thời gian", limTimeN="Phút",
+        grabOn="Bật lắc rương", hopOverlay="Hiện thông báo đổi server",
+        hopDelay="Giây trước khi đổi", hopping="ĐANG ĐỔI SERVER", hopIn="Đổi server sau",
+        hopCancel="Chạm vào màn hình để huỷ", hopCanceled="Đã huỷ đổi server",
+        preset="toque no số para đổi mức",
+        chestType="Loại rương (lọc)", ctAll="Tất cả", ctSilver="Chỉ Bạc", ctGold="Chỉ Vàng", ctDiamond="Chỉ Kim Cương",
+        neighbor="Bán kính rương gần", stuck="Đổi mục tiêu nếu kẹt (giây)",
+        nearby="Rương gần đây", curTarget="Mục tiêu hiện tại",
+        hopMode="Chế độ đổi server", hopModeLimit="Khi đạt giới hạn", hopModeLoop="Đổi liên tục",
+        hopLoopDelay="Phút giữa mỗi lần đổi", hopSelect="Chọn server theo",
+        hopLat="Ping tốt nhất", hopPlayers="Ít người hơn", hopRandom="Ngẫu nhiên",
+        hopMaxP="Người tối đa trong server", hopMinP="Người tối thiểu trong server",
+        avoidPrivate="Không vào server riêng tư", espClear="Xoá ESP khi nhặt rương",
+        autoTune="Rương tự động (tinh chỉnh)", retarget="Đổi mục tiêu (giây)", hyst="Độ trễ đổi (%)",
+        exportLang="Xuất ngôn ngữ (PT/EN/VI)", exportOk="Đã lưu GhostHub_Lang.json",
+        exportFail="Executor không hỗ trợ writefile", langLoaded="Đã tải ngôn ngữ từ file",
+        hopSearch="Đang tìm server...", hopNone="Không có server công khai phù hợp",
+
+    },
+}
+-- idiomas editáveis: se existir GhostHub_Lang.json, ele sobrescreve as strings
+local langFileLoaded = false
+local function loadLangFile()
+    if not (isfile and isfile(LANG_FILE)) then return end
+    local ok, data = pcall(function() return HttpService:JSONDecode(readfile(LANG_FILE)) end)
+    if ok and type(data) == "table" then
+        for lang, tbl in pairs(data) do
+            if type(tbl) == "table" then
+                L[lang] = L[lang] or {}
+                for k, v in pairs(tbl) do
+                    if type(v) == "string" then L[lang][k] = v end
+                end
+            end
+        end
+        langFileLoaded = true
+    end
+end
+local function exportLangFile()
+    if not writefile then return false end
+    local ok = pcall(function() writefile(LANG_FILE, HttpService:JSONEncode(L)) end)
+    return ok
+end
+loadLangFile()
+local function T(key) return (L[Config.Language] or L.pt)[key] or (L.pt[key]) or key end
+local refreshers = {}
+local function refreshAll() for _, fn in ipairs(refreshers) do pcall(fn) end end
+----------------------------------------------------------------- ILHAS
+local Islands = {
+    {"Pirate Starter Island (Nv.1-10)",  Vector3.new(1071, 16, 1426)},
+    {"Marine Starter Island (Nv.1-10)",  Vector3.new(-2573, 6, 2045)},
+    {"Middle Town (Nv.100)",             Vector3.new(-655, 7, 1436)},
+    {"Jean-Luc Island (Secreta)",        Vector3.new(-1249, 12, 5216)},
+    {"Jungle (Nv.10-30)",                Vector3.new(-1249, 11, 332)},
+    {"Pirate Village (Nv.30-60)",        Vector3.new(-1122, 4, 3855)},
+    {"Desert (Nv.60-90)",                Vector3.new(1094, 6, 4344)},
+    {"Frozen Village (Nv.90-120)",       Vector3.new(1198, 27, -1315)},
+    {"Marine Fortress (Nv.120-150)",     Vector3.new(-4505, 20, 4260)},
+    {"Sky Islands - Low (Nv.150-200)",   Vector3.new(-4970, 717, -2622)},
+    {"Prison (Nv.200-250)",              Vector3.new(4854, 5, 740)},
+    {"Colosseum (Nv.225-300)",           Vector3.new(-1428, 7, -3014)},
+    {"Magma Village (Nv.300-375)",       Vector3.new(-5228, 7, 8501)},
+    {"Underwater City (Nv.375-450)",     Vector3.new(61163, 11, 1819)},
+    {"Upper Skylands (Nv.450-575)",      Vector3.new(-7894, 5547, -380)},
+    {"Fountain City (Nv.625-700)",       Vector3.new(5230, 4, 4050)},
+}
+----------------------------------------------------------------- TEMA (igual ao site)
+local C = {
+    bg     = Color3.fromRGB(6, 10, 26),      -- azul marinho profundo
+    card   = Color3.fromRGB(10, 17, 42),     -- azul marinho fraco
+    row    = Color3.fromRGB(15, 25, 60),     -- variacao de marinho
+    stroke = Color3.fromRGB(40, 82, 190),    -- borda neon marinho
+    text   = Color3.fromRGB(226, 238, 255),
+    dim    = Color3.fromRGB(120, 146, 200),
+    cyan   = Color3.fromRGB(64, 132, 255),   -- neon azul marinho (destaque)
+    lime   = Color3.fromRGB(120, 190, 255),  -- marinho claro (valores/ON)
+    glow   = Color3.fromRGB(24, 60, 170),
+    red    = Color3.fromRGB(232, 90, 110),
+}
+local FONT_LOGO = Enum.Font.Fondamento      -- letra com curvas (GHOST HUB)
+-- ==== FONTE GLOBAL: Varela Round (fallback GothamMedium) ====
+local UI_FONTFACE = nil
+local UI_FONT_ENUM = Enum.Font.GothamMedium
+do
+    local ok, face = pcall(function()
+        return Font.fromName("VarelaRound", Enum.FontWeight.Medium, Enum.FontStyle.Normal)
+    end)
+    if ok and face then UI_FONTFACE = face end
+end
+local function applyFont(obj)
+    if UI_FONTFACE then
+        local ok = pcall(function() obj.FontFace = UI_FONTFACE end)
+        if ok then return end
+    end
+    pcall(function() obj.Font = UI_FONT_ENUM end)
+end
+-- aplica a fonte em tudo (menos a logo) e mantem aplicando no que nascer depois
+local function applyFontTree(root)
+    for _, d in ipairs(root:GetDescendants()) do
+        if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+            if d.Font ~= FONT_LOGO then applyFont(d) end
+        end
+    end
+    root.DescendantAdded:Connect(function(d)
+        if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+            task.defer(function()
+                if d.Font ~= FONT_LOGO then applyFont(d) end
+            end)
+        end
+    end)
+end
+local function navyGradient(o, rot)
+    local g = Instance.new("UIGradient")
+    g.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(10, 18, 46)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(14, 26, 66)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(8, 14, 36)),
+    })
+    g.Rotation = rot or 90
+    g.Parent = o
+    return g
+end
+local function neon(o, col, t)
+    local s = Instance.new("UIStroke")
+    s.Color = col or Color3.fromRGB(64, 132, 255)
+    s.Thickness = t or 1.8
+    s.Transparency = 0.05
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = o
+    local g = Instance.new("UIGradient")
+    g.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(90, 160, 255)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(30, 70, 190)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(90, 160, 255)),
+    })
+    g.Parent = s
+    task.spawn(function()
+        while s.Parent do
+            g.Rotation = (g.Rotation + 2) % 360
+            task.wait(0.05)
+        end
+    end)
+    return s
+end
+local GHOST = utf8.char(0x1F47B) -- 👻
+local function corner(o, r) local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r or 8); c.Parent = o; return c end
+local function stroke(o, col, t)
+    local s = Instance.new("UIStroke"); s.Color = col or C.stroke; s.Thickness = t or 1
+    s.Transparency = 0.25; s.Parent = o; return s
+end
+----------------------------------------------------------------- STATS
+local Stats = {
+    silver = 0, gold = 0, diamond = 0, chests = 0,
+    fruits = 0, fruitList = {},
+    startMoney = 0, money = 0,
+    joined = os.clock(),
+}
+local function getMoney()
+    local ls = LP:FindFirstChild("leaderstats")
+    if ls then
+        for _, v in ipairs(ls:GetChildren()) do
+            if v:IsA("IntValue") or v:IsA("NumberValue") then
+                local n = string.lower(v.Name)
+                if n:find("beli") or n:find("money") or n:find("cash") then return v.Value end
+            end
+        end
+    end
+    local data = LP:FindFirstChild("Data")
+    if data and data:FindFirstChild("Beli") then return data.Beli.Value end
+    return 0
+end
+Stats.startMoney = getMoney()
+local function fmtTime(sec)
+    sec = math.max(0, math.floor(sec))
+    return string.format("%02d:%02d:%02d", math.floor(sec/3600), math.floor(sec%3600/60), sec%60)
+end
+local function fmtNum(n)
+    local s, k = tostring(math.floor(n)), nil
+    repeat s, k = s:gsub("^(-?%d+)(%d%d%d)", "%1.%2") until k == 0
+    return s
+end
+local function serverUptime() return workspace.DistributedGameTime end
+----------------------------------------------------------------- GUI BASE
+if LP.PlayerGui:FindFirstChild("GhostHubAutoChest") then LP.PlayerGui.GhostHubAutoChest:Destroy() end
+local gui = Instance.new("ScreenGui")
+gui.Name = "GhostHubAutoChest"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = LP:WaitForChild("PlayerGui")
+-- WHITE SCREEN (fica atrás do hub)
+local white = Instance.new("Frame")
+white.Size = UDim2.fromScale(1, 1)
+white.BackgroundColor3 = Color3.new(1, 1, 1)
+white.BorderSizePixel = 0
+white.ZIndex = 0
+white.Visible = false
+white.Parent = gui
+local main = Instance.new("Frame")
+main.Name = "Main"
+main.Size = UDim2.fromOffset(400, 470)
+main.Position = UDim2.new(0.5, -200, 0.5, -235)
+main.BackgroundColor3 = C.bg
+main.BorderSizePixel = 0
+main.ZIndex = 2
+main.Parent = gui
+corner(main, 14); neon(main, C.cyan, 2); navyGradient(main, 115)
+-- topbar
+local top = Instance.new("Frame")
+top.Size = UDim2.new(1, 0, 0, 38)
+top.BackgroundColor3 = C.card
+top.BorderSizePixel = 0
+top.ZIndex = 2
+top.Parent = main
+corner(top, 14); navyGradient(top, 90); neon(top, C.glow, 1.2)
+local title = Instance.new("TextLabel")
+title.BackgroundTransparency = 1
+title.Position = UDim2.fromOffset(12, 0)
+title.Size = UDim2.new(1, -100, 1, 0)
+title.Font = FONT_LOGO
+title.TextSize = 20
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.TextColor3 = C.cyan
+title.ZIndex = 3
+title.Text = GHOST .. "  " .. T("title")
+title.Parent = top
+table.insert(refreshers, function() title.Text = GHOST .. "  " .. T("title") end)
+local dot = Instance.new("Frame")
+dot.Size = UDim2.fromOffset(8, 8)
+dot.Position = UDim2.new(1, -96, 0.5, -4)
+dot.BackgroundColor3 = C.dim
+dot.BorderSizePixel = 0
+dot.ZIndex = 3
+dot.Parent = top
+corner(dot, 4)
+local function topBtn(txt, x, col)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.fromOffset(26, 22)
+    b.Position = UDim2.new(1, x, 0, 8)
+    b.BackgroundColor3 = C.row
+    b.Text = txt
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 14
+    b.TextColor3 = col
+    b.ZIndex = 3
+    b.Parent = top
+    corner(b, 6); stroke(b)
+    return b
+end
+local btnMin   = topBtn("—", -62, C.lime)
+local btnClose = topBtn("X", -32, C.red)
+-- DRAG
+do
+    local dragging, dragStart, startPos = false, nil, nil
+    top.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dragStart = input.Position; startPos = main.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - dragStart
+            main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X,
+                                      startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+end
+-- ==== LOGO GHOST HUB (bolinha minimizada) ====
+local LOGO_URL = "https://id-preview--03754d2c-21d2-4e96-a139-28d0fd012879.lovable.app/__l5e/assets-v1/ac271e61-5d20-4314-8a3e-ee5fa968096a/ghosthub-logo.png"
+local function tryLogoAsset()
+    local ok, res = pcall(function()
+        if not (writefile and getcustomasset) then return nil end
+        local data = game:HttpGet(LOGO_URL)
+        writefile("GhostHub_Logo.png", data)
+        return getcustomasset("GhostHub_Logo.png")
+    end)
+    if ok and type(res) == "string" then return res end
+    return nil
+end
+-- BUBBLE fantasma
+local bubble = Instance.new("TextButton")
+bubble.Size = UDim2.fromOffset(124, 124)
+bubble.BackgroundColor3 = C.card
+bubble.Text = ""
+bubble.AutoButtonColor = false
+bubble.Visible = false
+bubble.ZIndex = 3
+bubble.Parent = gui
+corner(bubble, 62); neon(bubble, C.cyan, 3); navyGradient(bubble, 130)
+do
+    local g = Instance.new("TextLabel")
+    g.BackgroundTransparency = 1
+    g.Size = UDim2.new(1, 0, 0, 30)
+    g.Position = UDim2.fromOffset(0, 12)
+    g.Font = FONT_LOGO
+    g.TextSize = 28
+    g.TextColor3 = C.cyan
+    g.Text = GHOST
+    g.ZIndex = 4
+    g.Parent = bubble
+    local a = Instance.new("TextLabel")
+    a.BackgroundTransparency = 1
+    a.Size = UDim2.new(1, 0, 0, 30)
+    a.Position = UDim2.fromOffset(0, 42)
+    a.Font = FONT_LOGO
+    a.TextSize = 28
+    a.TextColor3 = C.cyan
+    a.Text = "GHOST"
+    a.ZIndex = 4
+    a.Parent = bubble
+    local b = Instance.new("TextLabel")
+    b.BackgroundTransparency = 1
+    b.Size = UDim2.new(1, 0, 0, 30)
+    b.Position = UDim2.fromOffset(0, 72)
+    b.Font = FONT_LOGO
+    b.TextSize = 28
+    b.TextColor3 = C.lime
+    b.Text = "HUB"
+    b.ZIndex = 4
+    b.Parent = bubble
+end
+
+local bubbleImg = Instance.new("ImageLabel")
+bubbleImg.Size = UDim2.new(1, -6, 1, -6)
+bubbleImg.Position = UDim2.fromOffset(3, 3)
+bubbleImg.BackgroundTransparency = 1
+bubbleImg.ScaleType = Enum.ScaleType.Fit
+bubbleImg.Image = ""
+bubbleImg.Visible = false
+bubbleImg.ZIndex = 5
+bubbleImg.Parent = bubble
+corner(bubbleImg, 62)
+task.spawn(function()
+    local asset = tryLogoAsset()
+    if asset then
+        bubbleImg.Image = asset
+        bubbleImg.Visible = true
+        for _, ch in ipairs(bubble:GetChildren()) do
+            if ch:IsA("TextLabel") then ch.Visible = false end
+        end
+    end
+end)
+local function clampBubble()
+    local vp = workspace.CurrentCamera.ViewportSize
+    bubble.Position = UDim2.fromOffset(
+        math.clamp(main.AbsolutePosition.X, 8, math.max(8, vp.X - 124)),
+        math.clamp(main.AbsolutePosition.Y, 8, math.max(8, vp.Y - 124)))
+end
+btnMin.MouseButton1Click:Connect(function() clampBubble(); main.Visible = false; bubble.Visible = true end)
+bubble.MouseButton1Click:Connect(function() bubble.Visible = false; main.Visible = true end)
+btnClose.MouseButton1Click:Connect(function() gui:Destroy() end)
+----------------------------------------------------------------- SIDEBAR (igual ao site)
+local side = Instance.new("Frame")
+side.Position = UDim2.fromOffset(0, 38)
+side.Size = UDim2.new(0, 58, 1, -60)
+side.BackgroundColor3 = C.card
+side.BackgroundTransparency = 0.35
+side.BorderSizePixel = 0
+side.ZIndex = 2
+side.Parent = main
+local sl = Instance.new("UIListLayout")
+sl.Padding = UDim.new(0, 4); sl.HorizontalAlignment = Enum.HorizontalAlignment.Center
+sl.Parent = side
+local sp = Instance.new("UIPadding"); sp.PaddingTop = UDim.new(0, 10); sp.Parent = side
+local pages, tabButtons = {}, {}
+local function makePage(id)
+    local p = Instance.new("ScrollingFrame")
+    p.Position = UDim2.fromOffset(64, 44)
+    p.Size = UDim2.new(1, -74, 1, -74)
+    p.BackgroundTransparency = 1
+    p.BorderSizePixel = 0
+    p.ScrollBarThickness = 3
+    p.ScrollBarImageColor3 = C.cyan
+    p.CanvasSize = UDim2.new()
+    p.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    p.Visible = false
+    p.ZIndex = 2
+    p.Parent = main
+    local l = Instance.new("UIListLayout"); l.Padding = UDim.new(0, 6); l.Parent = p
+    pages[id] = p
+    return p
+end
+local function selectTab(id)
+    for k, p in pairs(pages) do p.Visible = (k == id) end
+    for k, b in pairs(tabButtons) do
+        b.BackgroundColor3 = (k == id) and C.row or C.card
+        b.TextColor3 = (k == id) and C.cyan or C.dim
+        b.BackgroundTransparency = (k == id) and 0 or 1
+    end
+end
+local function makeTab(id, key, icon)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.fromOffset(46, 42)
+    b.BackgroundColor3 = C.card
+    b.BackgroundTransparency = 1
+    b.Font = Enum.Font.GothamMedium
+    b.TextSize = 9
+    b.TextColor3 = C.dim
+    b.Text = icon .. "\n" .. T(key)
+    b.AutoButtonColor = false
+    b.ZIndex = 3
+    b.Parent = side
+    corner(b, 8)
+    b.MouseButton1Click:Connect(function() selectTab(id) end)
+    tabButtons[id] = b
+    table.insert(refreshers, function() b.Text = icon .. "\n" .. T(key) end)
+end
+----------------------------------------------------------------- CONTROLES
+local function sectionTitle(parent, key)
+    local t = Instance.new("TextLabel")
+    t.Size = UDim2.new(1, 0, 0, 20)
+    t.BackgroundTransparency = 1
+    t.Font = Enum.Font.GothamBold
+    t.TextSize = 10
+    t.TextXAlignment = Enum.TextXAlignment.Left
+    t.TextColor3 = C.cyan
+    t.ZIndex = 3
+    t.Text = string.upper(T(key))
+    t.Parent = parent
+    table.insert(refreshers, function() t.Text = string.upper(T(key)) end)
+end
+local function rowBase(parent, h)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, 0, 0, h or 34)
+    f.BackgroundColor3 = C.row
+    f.BorderSizePixel = 0
+    f.ZIndex = 2
+    f.Parent = parent
+    corner(f, 7); stroke(f)
+    return f
+end
+local function label(parent, key)
+    local t = Instance.new("TextLabel")
+    t.BackgroundTransparency = 1
+    t.Position = UDim2.fromOffset(10, 0)
+    t.Size = UDim2.new(1, -110, 1, 0)
+    t.Font = Enum.Font.Gotham
+    t.TextSize = 12
+    t.TextXAlignment = Enum.TextXAlignment.Left
+    t.TextColor3 = C.text
+    t.ZIndex = 3
+    t.Text = T(key)
+    t.Parent = parent
+    table.insert(refreshers, function() t.Text = T(key) end)
+    return t
+end
+local DANGER_COLORS = {
+    baixo = Color3.fromRGB(120, 230, 140),
+    medio = Color3.fromRGB(255, 205, 90),
+    alto  = Color3.fromRGB(255, 110, 110),
+}
+local function dangerTag(f, level)
+    local d = Instance.new("TextLabel")
+    d.BackgroundTransparency = 1
+    d.Position = UDim2.fromOffset(10, 24)
+    d.Size = UDim2.new(1, -110, 0, 14)
+    d.Font = Enum.Font.GothamBold
+    d.TextSize = 10
+    d.TextXAlignment = Enum.TextXAlignment.Left
+    d.TextColor3 = DANGER_COLORS[level] or C.dim
+    d.ZIndex = 3
+    d.Text = "Perigo: " .. string.upper(level or "baixo")
+    d.Parent = f
+end
+local function Toggle(parent, key, field, callback, danger)
+    local f = rowBase(parent, danger and 46 or 34)
+    local lb = label(f, key)
+    if danger then
+        lb.Size = UDim2.new(1, -110, 0, 26)
+        dangerTag(f, danger)
+    end
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.fromOffset(44, 20)
+    btn.Position = UDim2.new(1, -54, 0.5, -10)
+    btn.BackgroundColor3 = C.bg
+    btn.Text = ""
+    btn.AutoButtonColor = false
+    btn.ZIndex = 3
+    btn.Parent = f
+    corner(btn, 10); stroke(btn)
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.fromOffset(14, 14)
+    knob.Position = UDim2.new(0, 3, 0.5, -7)
+    knob.BackgroundColor3 = C.dim
+    knob.BorderSizePixel = 0
+    knob.ZIndex = 4
+    knob.Parent = btn
+    corner(knob, 7)
+    local state = Instance.new("TextLabel")
+    state.BackgroundTransparency = 1
+    state.Size = UDim2.fromOffset(34, 20)
+    state.Position = UDim2.new(1, -92, 0.5, -10)
+    state.Font = Enum.Font.GothamBold
+    state.TextSize = 9
+    state.TextColor3 = C.dim
+    state.ZIndex = 3
+    state.Parent = f
+    local function paint()
+        local on = Config[field] and true or false
+        state.Text = on and T("on") or T("off")
+        state.TextColor3 = on and C.lime or C.dim
+        knob.BackgroundColor3 = on and C.lime or C.dim
+        TweenService:Create(knob, TweenInfo.new(0.15), {
+            Position = on and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)
+        }):Play()
+        btn.BackgroundColor3 = on and Color3.fromRGB(48, 62, 40) or C.bg
+    end
+    btn.MouseButton1Click:Connect(function()
+        Config[field] = not Config[field]
+        paint(); saveConfig()
+        if callback then task.spawn(callback, Config[field]) end
+    end)
+    table.insert(refreshers, paint)
+    paint()
+end
+local uiModeRefreshers = {}
+local function Slider(parent, key, field, min, max, decimals, presets, onChange)
+    local f = rowBase(parent, 48)
+    local lbl = label(f, key); lbl.Size = UDim2.new(1, -80, 0, 22)
+    local paintRef
+    -- TARGET: botao que gira entre valores prontos (300, 310, 330, 350, 400, 500...)
+    local val = Instance.new("TextButton")
+    val.BackgroundColor3 = C.bg
+    val.BackgroundTransparency = presets and 0 or 1
+    val.AutoButtonColor = false
+    val.Position = UDim2.new(1, -74, 0, 1)
+    val.Size = UDim2.fromOffset(64, 20)
+    val.Font = Enum.Font.Code
+    val.TextSize = 11
+    val.TextColor3 = C.cyan
+    val.Text = ""
+    val.ZIndex = 3
+    val.Parent = f
+    if presets then
+        corner(val, 5); stroke(val, C.cyan)
+        val.MouseButton1Click:Connect(function()
+            local cur, idx = Config[field], 1
+            for i, p in ipairs(presets) do
+                if math.abs(p - cur) < 1e-6 then idx = i break end
+                if p > cur then idx = i - 1 break end
+                idx = i
+            end
+            local nxt = presets[(idx % #presets) + 1]
+            Config[field] = math.clamp(nxt, min, max)
+            if paintRef then paintRef() end
+            saveConfig()
+            if onChange then task.spawn(onChange, Config[field]) end
+        end)
+    end
+
+    local bar = Instance.new("Frame")
+    bar.Position = UDim2.fromOffset(10, 30)
+    bar.Size = UDim2.new(1, -20, 0, 6)
+    bar.BackgroundColor3 = C.bg
+    bar.BorderSizePixel = 0
+    bar.ZIndex = 3
+    bar.Parent = f
+    corner(bar, 3)
+    local fill = Instance.new("Frame")
+    fill.BackgroundColor3 = C.cyan
+    fill.BorderSizePixel = 0
+    fill.Size = UDim2.new(0, 0, 1, 0)
+    fill.ZIndex = 4
+    fill.Parent = bar
+    corner(fill, 3)
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.fromOffset(70, 22)
+    box.Position = UDim2.new(1, -80, 0, 24)
+    box.BackgroundColor3 = C.bg
+    box.Font = Enum.Font.Code
+    box.TextSize = 11
+    box.TextColor3 = C.lime
+    box.ClearTextOnFocus = false
+    box.ZIndex = 4
+    box.Parent = f
+    corner(box, 5); stroke(box)
+
+    local function fmt(v)
+        return (decimals and decimals > 0) and string.format("%." .. decimals .. "f", v) or tostring(math.floor(v))
+    end
+    local function paint()
+        local v = Config[field]
+        val.Text = fmt(v)
+        if not box:IsFocused() then box.Text = fmt(v) end
+        fill.Size = UDim2.new(math.clamp((v - min) / (max - min), 0, 1), 0, 1, 0)
+    end
+    paintRef = paint
+
+    -- valor digitado na caixa aparece no TARGET na hora
+    box:GetPropertyChangedSignal("Text"):Connect(function()
+        local n = tonumber((box.Text or ""):gsub(",", "."))
+        if n then
+            n = math.clamp(n, min, max)
+            val.Text = fmt(n)
+            fill.Size = UDim2.new(math.clamp((n - min) / (max - min), 0, 1), 0, 1, 0)
+        end
+    end)
+
+    local function setFromX(px)
+        local a = math.clamp((px - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+        local v = min + (max - min) * a
+        if decimals and decimals > 0 then
+            local m = 10 ^ decimals; v = math.floor(v * m + 0.5) / m
+        else v = math.floor(v + 0.5) end
+        Config[field] = v; paint()
+    end
+    local dragging = false
+    bar.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; setFromX(i.Position.X)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(i)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            setFromX(i.Position.X)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            if dragging then
+                dragging = false; saveConfig()
+                if onChange then task.spawn(onChange, Config[field]) end
+            end
+        end
+    end)
+    box.FocusLost:Connect(function()
+        local n = tonumber((box.Text or ""):gsub(",", "."))
+        if n then
+            Config[field] = math.clamp(n, min, max)
+            saveConfig()
+            if onChange then task.spawn(onChange, Config[field]) end
+        end
+        paint()
+    end)
+
+    -- modo da UI: Target+Caixa | Barra dinamica+Caixa | So caixa
+    local function applyMode()
+        local mode = Config.UIMode or "TargetBox"
+        if mode == "BarBox" then
+            f.Size = UDim2.new(1, 0, 0, 62)
+            bar.Visible = true; bar.Position = UDim2.fromOffset(10, 52)
+            val.Visible = true; box.Visible = true
+        elseif mode == "Box" then
+            f.Size = UDim2.new(1, 0, 0, 52)
+            bar.Visible = false
+            val.Visible = false; box.Visible = true
+        else -- TargetBox
+            f.Size = UDim2.new(1, 0, 0, 52)
+            bar.Visible = false
+            val.Visible = true; box.Visible = true
+        end
+    end
+    table.insert(uiModeRefreshers, applyMode)
+    table.insert(refreshers, paint)
+    applyMode(); paint()
+    return f
+end
+
+local function applyUIMode()
+    for _, fn in ipairs(uiModeRefreshers) do pcall(fn) end
+end
+local function Segmented(parent, key, field, options, onChange)
+    local f = rowBase(parent, 52)
+    local lbl = label(f, key); lbl.Size = UDim2.new(1, -20, 0, 20)
+    local holder = Instance.new("Frame")
+    holder.Position = UDim2.fromOffset(10, 24)
+    holder.Size = UDim2.new(1, -20, 0, 20)
+    holder.BackgroundTransparency = 1
+    holder.ZIndex = 3
+    holder.Parent = f
+    local hh = Instance.new("UIListLayout")
+    hh.FillDirection = Enum.FillDirection.Horizontal
+    hh.Padding = UDim.new(0, 4); hh.Parent = holder
+    local btns = {}
+    local function paint()
+        for v, b in pairs(btns) do
+            local sel = (Config[field] == v)
+            b.BackgroundColor3 = sel and C.bg or C.card
+            b.TextColor3 = sel and C.cyan or C.dim
+        end
+    end
+    for _, opt in ipairs(options) do
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.fromOffset(math.floor(300 / #options) - 6, 20)
+        b.BackgroundColor3 = C.card
+        b.Font = Enum.Font.GothamMedium
+        b.TextSize = 11
+        b.Text = opt[3] and T(opt[3]) or opt[2]
+        b.AutoButtonColor = false
+        if opt[3] then table.insert(refreshers, function() b.Text = T(opt[3]) end) end
+        b.ZIndex = 4
+        b.Parent = holder
+        corner(b, 5)
+        b.MouseButton1Click:Connect(function()
+            Config[field] = opt[1]; paint(); saveConfig()
+            if onChange then onChange(opt[1]) end
+        end)
+        btns[opt[1]] = b
+    end
+    table.insert(refreshers, paint); paint()
+end
+local function Button(parent, text, color, fn)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, 0, 0, 32)
+    b.BackgroundColor3 = C.row
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 12
+    b.TextColor3 = color or C.cyan
+    b.Text = text
+    b.ZIndex = 3
+    b.Parent = parent
+    corner(b, 7); stroke(b, color or C.stroke)
+    b.MouseButton1Click:Connect(fn)
+    return b
+end
+local function InfoRow(parent, key, getter)
+    local f = rowBase(parent)
+    label(f, key)
+    local v = Instance.new("TextLabel")
+    v.BackgroundTransparency = 1
+    v.Position = UDim2.new(1, -150, 0, 0)
+    v.Size = UDim2.fromOffset(140, 34)
+    v.Font = Enum.Font.Code
+    v.TextSize = 12
+    v.TextXAlignment = Enum.TextXAlignment.Right
+    v.TextColor3 = C.lime
+    v.ZIndex = 3
+    v.Parent = f
+    local pad = Instance.new("UIPadding"); pad.PaddingRight = UDim.new(0, 10); pad.Parent = v
+    return function() v.Text = tostring(getter()) end
+end
+----------------------------------------------------------------- ESP
+local espFolder = Instance.new("Folder"); espFolder.Name = "GhostESP"; espFolder.Parent = gui
+local espCache = {}
+local function makeESP(part, text, color)
+    local bb = Instance.new("BillboardGui")
+    bb.Adornee = part
+    bb.Size = UDim2.fromOffset(180, 34)
+    bb.AlwaysOnTop = true
+    bb.MaxDistance = 5000
+    bb.Parent = espFolder
+    local t = Instance.new("TextLabel")
+    t.BackgroundTransparency = 1
+    t.Size = UDim2.fromScale(1, 1)
+    t.Font = Enum.Font.GothamBold
+    t.TextSize = 12
+    t.TextStrokeTransparency = 0.4
+    t.TextColor3 = color
+    t.Text = text
+    t.Parent = bb
+    return bb, t
+end
+----------------------------------------------------------------- ALVOS (baús / frutas)
+local CHEST_KIND = {
+    ["Chest1"] = "silver", ["Chest2"] = "gold", ["Chest3"] = "diamond",
+    ["Silver Chest"] = "silver", ["Chest of Gold"] = "gold", ["Diamond Chest"] = "diamond",
+}
+local function chestKind(inst)
+    local k = CHEST_KIND[inst.Name]
+    if k then return k end
+    local n = string.lower(inst.Name)
+    if n:find("chest") then
+        if n:find("diamond") then return "diamond" end
+        if n:find("gold") then return "gold" end
+        return "silver"
+    end
+    return nil
+end
+local function kindEnabled(kind)
+    local f = Config.ChestFilter or "all"
+    if f ~= "all" then return kind == f end
+    if kind == "silver" then return Config.FarmSilver end
+    if kind == "gold" then return Config.FarmGold end
+    if kind == "diamond" then return Config.FarmDiamond end
+    return false
+end
+local function espEnabled(kind)
+    if kind == "silver" then return Config.ESPSilver end
+    if kind == "gold" then return Config.ESPGold end
+    if kind == "diamond" then return Config.ESPDiamond end
+    return false
+end
+local KIND_COLOR = { silver = Color3.fromRGB(200,210,225), gold = Color3.fromRGB(245,205,90), diamond = C.cyan }
+local function rootOf(inst)
+    if inst:IsA("BasePart") then return inst end
+    return inst:FindFirstChildWhichIsA("BasePart", true)
+end
+local CollectionService = game:GetService("CollectionService")
+local function allChests()
+    local out, seen = {}, {}
+    local function add(inst)
+        if seen[inst] then return end
+        local k = chestKind(inst)
+        if not k then return end
+        if inst:GetAttribute("IsDisabled") then return end
+        local p = rootOf(inst)
+        if not p then return end
+        seen[inst] = true
+        table.insert(out, { inst = inst, part = p, kind = k })
+    end
+    local ok, tagged = pcall(function() return CollectionService:GetTagged("_ChestTagged") end)
+    if ok and tagged then
+        for _, inst in ipairs(tagged) do add(inst) end
+    end
+    local root = workspace:FindFirstChild("Chests") or workspace
+    for _, inst in ipairs(root:GetChildren()) do add(inst) end
+    return out
+end
+-- ==== BAUS SIMPLES (bloco neon, sem textura/animacao) ====
+local SIMPLE_COLORS = {
+    silver  = Color3.fromRGB(190, 205, 230),
+    gold    = Color3.fromRGB(255, 200, 70),
+    diamond = Color3.fromRGB(110, 235, 255),
+}
+local simpleCache = {}
+local function simplifyChest(model, kind)
+    if simpleCache[model] then return end
+    local base = rootOf(model); if not base then return end
+    local cf, size = base.CFrame, base.Size
+    if model:IsA("Model") then
+        local ok, c, s = pcall(function() local a, b = model:GetBoundingBox(); return a, b end)
+        if ok and c then cf, size = c, s end
+    end
+    local hidden = {}
+    for _, d in ipairs(model:GetDescendants()) do
+        if d:IsA("BasePart") then
+            table.insert(hidden, { obj = d, t = d.Transparency })
+            d.Transparency = 1
+        elseif d:IsA("SpecialMesh") or d:IsA("Decal") or d:IsA("Texture")
+            or d:IsA("ParticleEmitter") or d:IsA("Beam") or d:IsA("Trail") then
+            table.insert(hidden, { obj = d, enabled = true })
+            pcall(function() d.Enabled = false end)
+            pcall(function() d.Transparency = 1 end)
+        end
+    end
+    local box = Instance.new("Part")
+    box.Name = "GhostHubSimple"
+    box.Anchored = true
+    box.CanCollide = false
+    box.Material = Enum.Material.Neon
+    box.Color = SIMPLE_COLORS[kind] or C.cyan
+    box.Size = size
+    box.CFrame = cf
+    box.Parent = model
+    simpleCache[model] = { box = box, hidden = hidden }
+end
+local function restoreChest(model)
+    local data = simpleCache[model]; if not data then return end
+    pcall(function() data.box:Destroy() end)
+    for _, h in ipairs(data.hidden) do
+        pcall(function()
+            if h.t ~= nil then h.obj.Transparency = h.t end
+            if h.enabled then h.obj.Enabled = true end
+        end)
+    end
+    simpleCache[model] = nil
+end
+local function restoreAllChests()
+    for m in pairs(simpleCache) do restoreChest(m) end
+end
+task.spawn(function()
+    while task.wait(1) do
+        pcall(function()
+            if Config.SimpleChests then
+                for _, c in ipairs(allChests()) do simplifyChest(c.inst, c.kind) end
+            end
+            for m in pairs(simpleCache) do
+                if not m.Parent then simpleCache[m] = nil end
+            end
+        end)
+    end
+end)
+-- ==== CARREGAR TODOS OS BAUS DO MAPA (stream) ====
+task.spawn(function()
+    while task.wait(3) do
+        if Config.LoadAllChests then
+            pcall(function()
+                local r = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+                if not r then return end
+                pcall(function() workspace.StreamingPauseMode = Enum.StreamingPauseMode.Disabled end)
+                local pts = {}
+                for _, c in ipairs(CollectionService:GetTagged("_ChestTagged")) do
+                    local ok, p = pcall(function() return c:GetPivot().Position end)
+                    if ok and p then table.insert(pts, p) end
+                end
+                -- varre o mapa em anel pra puxar os baus fora do raio de streaming
+                local base = r.Position
+                for i = 0, 7 do
+                    local a = (i / 8) * math.pi * 2
+                    for _, rad in ipairs({ 800, 2000, 4000, 8000 }) do
+                        table.insert(pts, base + Vector3.new(math.cos(a) * rad, 0, math.sin(a) * rad))
+                    end
+                end
+                for _, p in ipairs(pts) do
+                    pcall(function() LP:RequestStreamAroundAsync(p) end)
+                end
+            end)
+        end
+    end
+end)
+-- ==== DESATIVAR SKINS (acessorios / efeitos dos personagens) ====
+local skinCache = {}
+local function applySkins(off)
+    for _, pl in ipairs(Players:GetPlayers()) do
+        local ch = pl.Character
+        if ch then
+            for _, d in ipairs(ch:GetDescendants()) do
+                if d:IsA("Accessory") or d:IsA("Decal") or d:IsA("Texture")
+                    or d:IsA("ParticleEmitter") or d:IsA("Trail") or d:IsA("Beam")
+                    or d:IsA("ShirtGraphic") or d:IsA("Shirt") or d:IsA("Pants") then
+                    if off then
+                        if skinCache[d] == nil then skinCache[d] = true end
+                        pcall(function() d.Enabled = false end)
+                        pcall(function() d.Parent = nil end)
+                    end
+                end
+            end
+        end
+    end
+    if not off then
+        for d in pairs(skinCache) do pcall(function() d.Enabled = true end) end
+        skinCache = {}
+    end
+end
+task.spawn(function()
+    while task.wait(2) do
+        if Config.DisableSkins then pcall(applySkins, true) end
+    end
+end)
+local function isFruit(inst)
+    if not inst:IsA("Tool") and not inst:IsA("Model") then return false end
+    local n = string.lower(inst.Name)
+    return n:find("fruit") ~= nil or n:find("%-fruit") ~= nil
+end
+local function allFruits()
+    local out = {}
+    for _, inst in ipairs(workspace:GetChildren()) do
+        if isFruit(inst) then
+            local p = rootOf(inst)
+            if p then table.insert(out, { inst = inst, part = p }) end
+        end
+    end
+    return out
+end
+----------------------------------------------------------------- FPS / MAPA / WHITE
+local hiddenParts = {}
+local function protectedInstance(inst)
+    if chestKind(inst) then return true end
+    if isFruit(inst) then return true end
+    if inst:IsA("Terrain") or inst:IsA("Camera") then return true end
+    if Players:GetPlayerFromCharacter(inst) then return true end
+    if LP.Character and inst == LP.Character then return true end
+    return false
+end
+local function applyDeleteMap(on)
+    if on then
+        for _, inst in ipairs(workspace:GetDescendants()) do
+            if not protectedInstance(inst) then
+                local top = inst
+                while top.Parent and top.Parent ~= workspace do top = top.Parent end
+                if not protectedInstance(top) then
+                    if inst:IsA("BasePart") and inst.Transparency < 1 then
+                        hiddenParts[inst] = { inst.Transparency, inst.CanCollide }
+                        inst.Transparency = 1
+                        inst.CanCollide = false
+                    elseif inst:IsA("Decal") or inst:IsA("Texture") then
+                        hiddenParts[inst] = { inst.Transparency }
+                        inst.Transparency = 1
+                    end
+                end
+            end
+        end
+    else
+        for inst, old in pairs(hiddenParts) do
+            pcall(function()
+                inst.Transparency = old[1]
+                if old[2] ~= nil and inst:IsA("BasePart") then inst.CanCollide = old[2] end
+            end)
+        end
+        hiddenParts = {}
+    end
+end
+local savedLighting = nil
+-- ==== FPS BOOSTER EXTERNO (executa uma unica vez por sessao) ====
+local FPS_EXTERNAL_URLS = {
+    "https://rawscripts.net/raw/Universal-Script-fps-optimizer-226670",
+    "https://rawscripts.net/raw/Universal-Script-FPS-booster-v2-215532",
+    "https://rawscripts.net/raw/Universal-Script-Best-universal-aimlock-and-fps-booster-script-228330",
+}
+local fpsExternalDone = false
+local fpsExternalRunning = false
+local function runExternalFPS()
+    if fpsExternalDone or fpsExternalRunning then return false end
+    fpsExternalRunning = true
+    for _, url in ipairs(FPS_EXTERNAL_URLS) do
+        pcall(function()
+            local ok, src = pcall(function() return game:HttpGet(url, true) end)
+            if ok and type(src) == "string" and #src > 50 then
+                local fn = loadstring(src)
+                if fn then pcall(fn) end
+            end
+        end)
+        task.wait(0.35)
+    end
+    fpsExternalDone = true
+    fpsExternalRunning = false
+    return true
+end
+-- ==== FPS 1 / 2 / 3 (externos, 1 vez por sessao, sem OFF) ====
+local FPS_SCRIPTS = {
+    FPS1 = "https://rawscripts.net/raw/Universal-Script-fps-optimizer-226670",
+    FPS2 = "https://rawscripts.net/raw/Universal-Script-FPS-booster-v2-215532",
+    FPS3 = "https://rawscripts.net/raw/Universal-Script-Best-universal-aimlock-and-fps-booster-script-228330",
+}
+local fpsRan = {}
+local function runFPSScript(key)
+    if fpsRan[key] then return false end
+    local url = FPS_SCRIPTS[key]; if not url then return false end
+    fpsRan[key] = true
+    local ok = pcall(function()
+        local src = game:HttpGet(url, true)
+        if src and #src > 50 then loadstring(src)() end
+    end)
+    print(("[GHOST HUB] %s %s"):format(key, ok and "aplicado (nao tem OFF)" or "falhou"))
+    return ok
+end
+local function applyFPSBoost(on)
+    if on then
+        savedLighting = savedLighting or {
+            GlobalShadows = Lighting.GlobalShadows,
+            FogEnd = Lighting.FogEnd,
+            Brightness = Lighting.Brightness,
+            Quality = settings().Rendering.QualityLevel,
+        }
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
+        Lighting.Brightness = 1
+        for _, e in ipairs(Lighting:GetChildren()) do
+            if e:IsA("PostEffect") then e.Enabled = false end
+        end
+        pcall(function() settings().Rendering.QualityLevel = Enum.QualityLevel.Level01 end)
+        for _, inst in ipairs(workspace:GetDescendants()) do
+            if inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Smoke")
+            or inst:IsA("Fire") or inst:IsA("Sparkles") or inst:IsA("Explosion") then
+                inst.Enabled = false
+            elseif inst:IsA("BasePart") then
+                inst.Material = Enum.Material.SmoothPlastic
+                inst.Reflectance = 0
+                inst.CastShadow = false
+            end
+        end
+    elseif savedLighting then
+        Lighting.GlobalShadows = savedLighting.GlobalShadows
+        Lighting.FogEnd = savedLighting.FogEnd
+        Lighting.Brightness = savedLighting.Brightness
+        pcall(function() settings().Rendering.QualityLevel = savedLighting.Quality end)
+    end
+end
+----------------------------------------------------------------- SERVER HOP
+local function hopQueue()
+    if queue_on_teleport then
+        pcall(function()
+            queue_on_teleport(([[
+                task.wait(5)
+                local ok, src = pcall(function() return game:HttpGet("%s") end)
+                if ok and src and #src > 200 then pcall(function() loadstring(src)() end) end
+            ]]):format(SCRIPT_URL))
+        end)
+    end
+end
+
+-- lista de servers PUBLICOS, ja filtrando privado/VIP, cheio e limites de jogadores
+local function fetchServers()
+    local found, cursor, pages = {}, nil, 0
+    repeat
+        pages = pages + 1
+        local url = "https://games.roblox.com/v1/games/" .. game.PlaceId ..
+            "/servers/Public?sortOrder=Asc&limit=100" .. (cursor and ("&cursor=" .. cursor) or "")
+        local ok, body = pcall(function() return game:HttpGet(url) end)
+        if not ok then break end
+        local okd, data = pcall(function() return HttpService:JSONDecode(body) end)
+        if not okd or type(data) ~= "table" or not data.data then break end
+        for _, s in ipairs(data.data) do
+            local playing  = tonumber(s.playing) or 0
+            local maxp     = tonumber(s.maxPlayers) or 0
+            -- server privado / VIP: tem accessCode ou vipServerId, ou nao aparece como publico
+            local private  = (s.accessCode ~= nil) or (s.vipServerId ~= nil) or (s.private == true)
+            local okPriv   = not (Config.AvoidPrivate and private)
+            local okRoom   = maxp > 0 and playing < maxp
+            local okMax    = playing <= math.max(1, Config.HopMaxPlayers or 20)
+            local okMin    = playing >= math.max(0, Config.HopMinPlayers or 0)
+            if s.id ~= game.JobId and okPriv and okRoom and okMax and okMin then
+                table.insert(found, { id = s.id, playing = playing, ping = tonumber(s.ping) or 9999 })
+            end
+        end
+        cursor = data.nextPageCursor
+        task.wait(0.15)
+    until (not cursor) or pages >= 5 or #found >= 120
+    return found
+end
+
+local function pickServer(list)
+    if #list == 0 then return nil end
+    local mode = Config.HopSelect or "latency"
+    if mode == "latency" then
+        table.sort(list, function(a, b) return a.ping < b.ping end)
+        return list[math.random(1, math.min(5, #list))].id
+    elseif mode == "players" then
+        table.sort(list, function(a, b) return a.playing < b.playing end)
+        return list[math.random(1, math.min(5, #list))].id
+    end
+    return list[math.random(#list)].id
+end
+
+local function hopServer()
+    hopQueue()
+    local list = fetchServers()
+    local id = pickServer(list)
+    if id then
+        local ok = pcall(function()
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, id, LP)
+        end)
+        if ok then return true end
+    end
+    -- nada compativel: nao cai em server privado, tenta de novo depois
+    return false
+end
+----------------------------------------------------------------- TELA DE HOP (azul marinho neon)
+local hopScreen = Instance.new("TextButton")
+hopScreen.Size = UDim2.fromScale(1, 1)
+hopScreen.BackgroundColor3 = Color3.fromRGB(8, 16, 64)
+hopScreen.BackgroundTransparency = 0.25
+hopScreen.AutoButtonColor = false
+hopScreen.Text = ""
+hopScreen.Visible = false
+hopScreen.ZIndex = 50
+hopScreen.Parent = gui
+stroke(hopScreen, Color3.fromRGB(60, 120, 255), 3)
+local hopGhost = Instance.new("TextLabel")
+hopGhost.BackgroundTransparency = 1
+hopGhost.Size = UDim2.new(1, 0, 0, 90)
+hopGhost.Position = UDim2.new(0, 0, 0.30, 0)
+hopGhost.Font = Enum.Font.GothamBold
+hopGhost.TextSize = 64
+hopGhost.TextColor3 = Color3.fromRGB(120, 200, 255)
+hopGhost.Text = GHOST
+hopGhost.ZIndex = 51
+hopGhost.Parent = hopScreen
+local hopTitle = Instance.new("TextLabel")
+hopTitle.BackgroundTransparency = 1
+hopTitle.Size = UDim2.new(1, 0, 0, 40)
+hopTitle.Position = UDim2.new(0, 0, 0.44, 0)
+hopTitle.Font = Enum.Font.GothamBlack
+hopTitle.TextSize = 26
+hopTitle.TextColor3 = Color3.fromRGB(120, 200, 255)
+hopTitle.TextStrokeTransparency = 0.5
+hopTitle.ZIndex = 51
+hopTitle.Parent = hopScreen
+local hopSub = Instance.new("TextLabel")
+hopSub.BackgroundTransparency = 1
+hopSub.Size = UDim2.new(1, 0, 0, 34)
+hopSub.Position = UDim2.new(0, 0, 0.52, 0)
+hopSub.Font = Enum.Font.GothamBold
+hopSub.TextSize = 20
+hopSub.TextColor3 = C.text
+hopSub.ZIndex = 51
+hopSub.Parent = hopScreen
+local hopHint = Instance.new("TextLabel")
+hopHint.BackgroundTransparency = 1
+hopHint.Size = UDim2.new(1, 0, 0, 26)
+hopHint.Position = UDim2.new(0, 0, 0.60, 0)
+hopHint.Font = Enum.Font.Gotham
+hopHint.TextSize = 14
+hopHint.TextColor3 = Color3.fromRGB(150, 190, 240)
+hopHint.ZIndex = 51
+hopHint.Parent = hopScreen
+
+local hopPending, hopCancel = false, false
+hopScreen.MouseButton1Click:Connect(function()
+    if hopPending then hopCancel = true end
+end)
+-- pede hop mostrando a tela e permitindo cancelar
+local function requestHop(reason)
+    if hopPending then return end
+    hopPending, hopCancel = true, false
+    if Config.HopOverlay then
+        local secs = math.max(1, math.floor(Config.HopDelay or 3))
+        hopTitle.Text = T("hopping") .. (reason and ("  ·  " .. reason) or "")
+        hopHint.Text = T("hopCancel")
+        hopScreen.Visible = true
+        for i = secs, 1, -1 do
+            if hopCancel then break end
+            hopSub.Text = ("%s  %d s"):format(T("hopIn"), i)
+            local t0 = os.clock()
+            while os.clock() - t0 < 1 do
+                if hopCancel then break end
+                task.wait(0.05)
+            end
+        end
+        hopScreen.Visible = false
+        if hopCancel then
+            hopPending = false
+            return false
+        end
+    end
+    local done = hopServer()
+    if not done then
+        hopTitle.Text = T("hopNone")
+        hopSub.Text = ""
+        hopHint.Text = ""
+        hopScreen.Visible = true
+        task.wait(2)
+        hopScreen.Visible = false
+    end
+    hopPending = false
+    return done
+end
+-- UPTIME: se o server esta ligado ha menos que o minimo escolhido (2h/3h/4h), troca
+task.spawn(function()
+    task.wait(8)
+    while true do
+        if Config.ServerHop and (Config.MinUptime or 0) > 0 and not hopPending then
+            if serverUptime() < Config.MinUptime * 3600 then
+                requestHop("uptime")
+            end
+        end
+        task.wait(20)
+    end
+end)
+
+-- LIMITES: baus / dinheiro / tempo -> server hop (continua valendo depois do hop)
+local limitStart = os.clock()
+local function resetLimits()
+    limitStart = os.clock()
+    Stats.chests, Stats.silver, Stats.gold, Stats.diamond = 0, 0, 0, 0
+    Stats.startMoney = getMoney()
+    Stats.money = 0
+end
+task.spawn(function()
+    while task.wait(2) do
+        if not hopPending and Config.HopMode ~= "loop" then
+            local reason = nil
+            if Config.LimitChestOn and Stats.chests >= math.max(1, Config.LimitChest or 0) then
+                reason = T("limChest")
+            elseif Config.LimitMoneyOn and Stats.money >= math.max(1, Config.LimitMoney or 0) then
+                reason = T("limMoney")
+            elseif Config.LimitTimeOn and (os.clock() - limitStart) >= math.max(1, Config.LimitTime or 0) * 60 then
+                reason = T("limTime")
+            end
+            if reason then
+                requestHop(reason)
+                resetLimits()
+            end
+        end
+    end
+end)
+
+-- MODO LOOP: fica dando hop sem parar (sempre em servers publicos)
+task.spawn(function()
+    while task.wait(5) do
+        if Config.ServerHop and Config.HopMode == "loop" and not hopPending then
+            local wait_s = math.max(1, Config.HopLoopDelay or 5) * 60
+            if Config.LimitTimeOn then wait_s = math.max(1, Config.LimitTime or 1) * 60 end
+            if (os.clock() - limitStart) >= wait_s then
+                requestHop(T("hopModeLoop"))
+                resetLimits()
+            end
+        end
+    end
+end)
+
+----------------------------------------------------------------- MOVIMENTO (TweenService PartTele)
+local function hrp()
+    local ch = LP.Character
+    return ch and ch:FindFirstChild("HumanoidRootPart")
+end
+-- TP direto (logica do Fluent): CFrame + zera velocidade pra nao "voar"
+local function setRoot(cf)
+    local ch = LP.Character
+    local r = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not r or not cf then return false end
+    pcall(function()
+        r.CFrame = cf
+        r.AssemblyLinearVelocity = Vector3.zero
+        r.AssemblyAngularVelocity = Vector3.zero
+    end)
+    return true
+end
+local function alive()
+    local ch = LP.Character
+    local hum = ch and ch:FindFirstChildWhichIsA("Humanoid")
+    return ch and hum and hum.Health > 0 and ch:FindFirstChild("HumanoidRootPart")
+end
+
+-- ==== SISTEMA DE PORTAIS + MOVIMENTO (PartTele / TweenService) ==
